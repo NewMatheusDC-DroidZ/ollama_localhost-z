@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ollama Master UI</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root { --bg: #000; --card: #111; --border: #222; --accent: #3b82f6; --text: #fff; --dim: #a1a1aa; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: var(--bg); color: var(--text); font-family: -apple-system, system-ui, sans-serif; height: 100dvh; overflow: hidden; }
+        .hidden { display: none !important; }
+
+        /* Setup */
+        #setup-screen { max-width: 400px; margin: 50px auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+        input, select { background: var(--card); border: 1px solid var(--border); color: #fff; padding: 12px; border-radius: 12px; outline: none; width: 100%; }
+        .btn-main { background: #fff; color: #000; padding: 15px; border-radius: 12px; font-weight: bold; border: none; cursor: pointer; }
+
+        /* Layout */
+        #chat-screen { display: flex; flex-direction: column; height: 100dvh; }
+        header { padding: 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: var(--bg); z-index: 10; }
+        #chat-box { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 20px; padding-bottom: 180px; scroll-behavior: smooth; }
+
+        /* Markdown Styles */
+        .msg-content h1, .msg-content h2, .msg-content h3 { margin: 10px 0; color: var(--accent); }
+        .msg-content p { margin-bottom: 8px; }
+        .msg-content ul { margin-left: 20px; margin-bottom: 10px; }
+        .msg-content strong { color: #fff; font-weight: bold; }
+
+        /* Bubbles */
+        .msg { max-width: 90%; padding: 12px; border-radius: 15px; line-height: 1.6; font-size: 15px; position: relative; }
+        .user-msg { background: #222; align-self: flex-end; }
+        .bot-msg { align-self: flex-start; background: transparent; border-left: 2px solid #333; border-radius: 0; }
+
+        /* File UI */
+        #file-preview { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 15px; background: var(--bg); }
+        .file-chip { background: var(--accent); color: #fff; padding: 6px 12px; border-radius: 20px; font-size: 12px; display: flex; align-items: center; gap: 8px; animation: fadeIn 0.2s; }
+        .file-chip b { cursor: pointer; background: rgba(0,0,0,0.2); border-radius: 50%; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; }
+        
+        .file-bubble { background: #1a1a1a; border: 1px solid var(--border); padding: 10px; border-radius: 10px; margin: 5px 0; cursor: pointer; display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--accent); }
+
+        /* Code Blocks */
+        pre { background: #0d0d0d; padding: 15px; border-radius: 10px; overflow-x: auto; margin: 10px 0; border: 1px solid #222; position: relative; }
+        code { font-family: 'Menlo', 'Monaco', monospace; font-size: 13px; color: #e0e0e0; }
+        .copy-btn { position: absolute; right: 10px; top: 10px; background: #333; color: #eee; border: none; padding: 4px 8px; border-radius: 6px; font-size: 11px; cursor: pointer; opacity: 0.7; }
+        .copy-btn:hover { opacity: 1; }
+
+        /* Bottom Area */
+        .input-container { position: fixed; bottom: 0; left: 0; right: 0; background: var(--bg); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom, 20px); }
+        .input-wrapper { margin: 10px 15px; background: var(--card); border-radius: 30px; display: flex; align-items: center; padding: 6px 12px; border: 1px solid var(--border); }
+        .input-wrapper input[type="text"] { border: none; flex: 1; background: transparent; padding: 12px; color: #fff; font-size: 16px; }
+        
+        .loader { display: flex; gap: 4px; padding: 10px; }
+        .dot { width: 6px; height: 6px; background: var(--accent); border-radius: 50%; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 0.2; } 50% { opacity: 1; } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+
+<div id="setup-screen">
+    <h2 style="text-align:center">Ollama Config</h2>
+    <label style="font-size:12px; color:var(--dim)">SERVER URL</label>
+    <input type="text" id="base-url" value="http://127.0.0.1:11434">
+    <label style="font-size:12px; color:var(--dim)">MODEL</label>
+    <select id="model-select"></select>
+    <button class="btn-main" onclick="startChat()">START SESSION</button>
+</div>
+
+<div id="chat-screen" class="hidden">
+    <header>
+        <button onclick="goBack()" style="background:none; border:none; color:var(--dim); font-size:20px;">←</button>
+        <strong id="header-model">Model</strong>
+        <button onclick="newChat()" style="background:none; border:none; color:var(--dim);">Clear</button>
+    </header>
+
+    <div id="chat-box"></div>
+
+    <div class="input-container">
+        <div id="file-preview"></div>
+        <div class="input-wrapper">
+            <label for="file-input" style="padding:0 10px; cursor:pointer; font-size:22px; color:var(--dim)">+</label>
+            <input type="file" id="file-input" class="hidden" multiple>
+            <input type="text" id="user-input" placeholder="Ask anything...">
+            <button onclick="sendMessage()" style="background:#fff; border:none; border-radius:50%; width:38px; height:38px; display:flex; align-items:center; justify-content:center; cursor:pointer">
+                <svg width="20" height="20" fill="black" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+let attachedFiles = [];
+let history = JSON.parse(localStorage.getItem('ollama_v4_history') || '[]');
+
+// Auto-detect Language
+const i18n = {
+    pt: { hello: "Olá, Usuário", clear: "Limpar?", error: "Erro de conexão" },
+    es: { hello: "Hola, Usuario", clear: "¿Limpiar?", error: "Error de conexión" },
+    en: { hello: "Hello, User", clear: "Clear?", error: "Error" }
+};
+const t = i18n[navigator.language.split('-')[0]] || i18n.en;
+
+// Setup functions
+async function updateModels() {
+    const url = document.getElementById('base-url').value;
+    try {
+        const r = await fetch(`${url}/api/tags`);
+        const d = await r.json();
+        document.getElementById('model-select').innerHTML = d.models.map(m => `<option value="${m.name}">${m.name}</option>`).join('');
+    } catch(e) {}
+}
+document.getElementById('base-url').oninput = updateModels;
+window.onload = updateModels;
+
+function startChat() {
+    localStorage.setItem('base', document.getElementById('base-url').value);
+    localStorage.setItem('model', document.getElementById('model-select').value);
+    document.getElementById('header-model').innerText = document.getElementById('model-select').value;
+    document.getElementById('setup-screen').classList.add('hidden');
+    document.getElementById('chat-screen').classList.remove('hidden');
+    renderHistory();
+}
+
+function renderHistory() {
+    const box = document.getElementById('chat-box');
+    box.innerHTML = history.length === 0 ? `<div style="text-align:center; margin-top:50px; color:var(--dim)"><h1>${t.hello}</h1></div>` : '';
+    history.forEach(m => addBubble(m.role, m.content, false));
+}
+
+// Add message bubble
+function addBubble(role, content, save = true) {
+    if(save) history.push({role, content});
+    
+    const div = document.createElement('div');
+    div.className = `msg ${role === 'user' ? 'user-msg' : 'bot-msg'}`;
+    
+    const inner = document.createElement('div');
+    inner.className = 'msg-content';
+    // Use marked for Markdown and sanitize for security
+    inner.innerHTML = marked.parse(content);
+    
+    div.appendChild(inner);
+    
+    // Process code blocks to remove language names from copy and add buttons
+    div.querySelectorAll('pre').forEach(pre => {
+        const code = pre.querySelector('code');
+        const btn = document.createElement('button');
+        btn.className = 'copy-btn';
+        btn.innerText = 'Copy';
+        btn.onclick = () => {
+            // Clean code: remove invisible markers
+            const textToCopy = code.innerText.replace(/^\w+\n/, ''); 
+            navigator.clipboard.writeText(textToCopy);
+            btn.innerText = 'Copied!';
+            setTimeout(() => btn.innerText = 'Copy', 2000);
+        };
+        pre.appendChild(btn);
+    });
+
+    document.getElementById('chat-box').appendChild(div);
+    document.getElementById('chat-box').scrollTop = document.getElementById('chat-box').scrollHeight;
+    if(save) localStorage.setItem('ollama_v4_history', JSON.stringify(history));
+}
+
+// Send function
+async function sendMessage() {
+    const input = document.getElementById('user-input');
+    const prompt = input.value.trim();
+    if(!prompt && attachedFiles.length === 0) return;
+
+    // Display user files as interactive bubbles
+    attachedFiles.forEach(f => {
+        const fDiv = document.createElement('div');
+        fDiv.className = 'file-bubble';
+        fDiv.innerHTML = `<span>📄 ${f.name}</span> <small>(Attached)</small>`;
+        fDiv.onclick = () => {
+            const blob = new Blob([f.content], {type: 'text/plain'});
+            const url = URL.createObjectURL(blob);
+            window.open(url, '_blank');
+        };
+        document.getElementById('chat-box').appendChild(fDiv);
+    });
+
+    // Prepare full prompt with file context
+    let fullMessage = prompt;
+    attachedFiles.forEach(f => fullMessage += `\n\n[FILE: ${f.name}]\n${f.content}`);
+
+    addBubble('user', prompt || "Uploaded files");
+    input.value = '';
+    
+    // Clear chips
+    attachedFiles = [];
+    document.getElementById('file-preview').innerHTML = '';
+
+    // Loader
+    const l = document.createElement('div');
+    l.className = 'loader'; l.id = 'loader';
+    l.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+    document.getElementById('chat-box').appendChild(l);
+
+    try {
+        const r = await fetch(`${localStorage.getItem('base')}/api/generate`, {
+            method: 'POST',
+            body: JSON.stringify({
+                model: localStorage.getItem('model'),
+                prompt: fullMessage,
+                stream: false
+            })
+        });
+        const d = await r.json();
+        document.getElementById('loader').remove();
+        addBubble('bot', d.response);
+    } catch(e) {
+        document.getElementById('loader').remove();
+        addBubble('bot', t.error);
+    }
+}
+
+// File handling
+document.getElementById('file-input').onchange = (e) => {
+    Array.from(e.target.files).forEach(file => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const fileData = { name: file.name, content: ev.target.result, id: Date.now() + Math.random() };
+            attachedFiles.push(fileData);
+            
+            const chip = document.createElement('div');
+            chip.className = 'file-chip';
+            chip.id = `chip-${fileData.id}`;
+            chip.innerHTML = `${file.name.substring(0,10)}... <b onclick="removeFile(${fileData.id})">×</b>`;
+            document.getElementById('file-preview').appendChild(chip);
+        };
+        reader.readAsText(file);
+    });
+};
+
+function removeFile(id) {
+    attachedFiles = attachedFiles.filter(f => f.id !== id);
+    document.getElementById(`chip-${id}`).remove();
+}
+
+function newChat() {
+    if(confirm(t.clear)) {
+        history = [];
+        localStorage.removeItem('ollama_v4_history');
+        renderHistory();
+    }
+}
+
+function goBack() {
+    document.getElementById('chat-screen').classList.add('hidden');
+    document.getElementById('setup-screen').classList.remove('hidden');
+}
+
+document.getElementById('user-input').onkeypress = (e) => { if(e.key === 'Enter') sendMessage(); };
+</script>
+</body>
+</html>
